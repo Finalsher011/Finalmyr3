@@ -1,0 +1,804 @@
+
+--==================================================
+-- AIRFIREGUNS V3
+-- Interface + NPC ESP + AIM ASSIST
+-- Ambiente próprio de treinamento Roblox
+--==================================================
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+
+local Player = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+local PlayerGui = Player:WaitForChild("PlayerGui")
+
+local Config = {
+    AimAssist = false,
+    AimKey = Enum.UserInputType.MouseButton2,
+    AimPart = "Head",
+    Smoothness = 35,
+    FOV = 120,
+
+    BoxESP = true,
+    SkeletonESP = true,
+    NameESP = true,
+    DistanceESP = true,
+    HealthESP = true,
+
+    MaxDistance = 1000,
+    ESPColor = Color3.fromRGB(0, 220, 255),
+    LineThickness = 2
+}
+
+local alive = true
+local minimized = false
+local aiming = false
+local ESPObjects = {}
+local Connections = {}
+
+local function connect(signal, callback)
+    local c = signal:Connect(callback)
+    table.insert(Connections, c)
+    return c
+end
+
+--==================================================
+-- INTERFACE
+--==================================================
+
+local old = PlayerGui:FindFirstChild("AirFireGuns")
+if old then old:Destroy() end
+
+local GUI = Instance.new("ScreenGui")
+GUI.Name = "AirFireGuns"
+GUI.ResetOnSpawn = false
+GUI.DisplayOrder = 100
+GUI.Parent = PlayerGui
+
+local Main = Instance.new("Frame")
+Main.Size = UDim2.fromOffset(620, 430)
+Main.Position = UDim2.new(0.5, -310, 0.5, -215)
+Main.BackgroundColor3 = Color3.fromRGB(14, 17, 25)
+Main.BorderSizePixel = 0
+Main.ClipsDescendants = true
+Main.Parent = GUI
+
+Instance.new("UICorner", Main).CornerRadius = UDim.new(0, 12)
+
+local Stroke = Instance.new("UIStroke")
+Stroke.Color = Color3.fromRGB(0, 200, 255)
+Stroke.Thickness = 1.3
+Stroke.Parent = Main
+
+local Header = Instance.new("Frame")
+Header.Size = UDim2.new(1, 0, 0, 55)
+Header.BackgroundColor3 = Color3.fromRGB(22, 27, 39)
+Header.BorderSizePixel = 0
+Header.Parent = Main
+
+local Logo = Instance.new("TextLabel")
+Logo.Size = UDim2.new(1, -120, 1, 0)
+Logo.Position = UDim2.fromOffset(18, 0)
+Logo.BackgroundTransparency = 1
+Logo.Text = "AIRFIREGUNS  /  V3"
+Logo.TextColor3 = Color3.fromRGB(0, 220, 255)
+Logo.Font = Enum.Font.GothamBold
+Logo.TextSize = 19
+Logo.TextXAlignment = Enum.TextXAlignment.Left
+Logo.Parent = Header
+
+local function makeButton(parent, text, position, size)
+    local b = Instance.new("TextButton")
+    b.Text = text
+    b.Position = position
+    b.Size = size
+    b.BackgroundColor3 = Color3.fromRGB(35, 43, 58)
+    b.TextColor3 = Color3.new(1, 1, 1)
+    b.Font = Enum.Font.GothamBold
+    b.TextSize = 13
+    b.AutoButtonColor = true
+    b.Parent = parent
+
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+    return b
+end
+
+local Minimize = makeButton(
+    Header, "-", UDim2.new(1, -82, 0, 10),
+    UDim2.fromOffset(30, 32)
+)
+
+local Close = makeButton(
+    Header, "X", UDim2.new(1, -43, 0, 10),
+    UDim2.fromOffset(30, 32)
+)
+
+local Sidebar = Instance.new("Frame")
+Sidebar.Position = UDim2.fromOffset(0, 55)
+Sidebar.Size = UDim2.new(0, 145, 1, -55)
+Sidebar.BackgroundColor3 = Color3.fromRGB(19, 23, 33)
+Sidebar.BorderSizePixel = 0
+Sidebar.Parent = Main
+
+local Content = Instance.new("ScrollingFrame")
+Content.Position = UDim2.fromOffset(155, 65)
+Content.Size = UDim2.new(1, -165, 1, -75)
+Content.BackgroundTransparency = 1
+Content.BorderSizePixel = 0
+Content.ScrollBarThickness = 3
+Content.CanvasSize = UDim2.fromOffset(0, 700)
+Content.Parent = Main
+
+local function clearContent()
+    for _, v in ipairs(Content:GetChildren()) do
+        v:Destroy()
+    end
+end
+
+-- Arrastar janela
+do
+    local dragging = false
+    local dragStart
+    local startPosition
+
+    connect(Header.InputBegan, function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            dragStart = input.Position
+            startPosition = Main.Position
+        end
+    end)
+
+    connect(UserInputService.InputChanged, function(input)
+        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            local delta = input.Position - dragStart
+            Main.Position = UDim2.new(
+                startPosition.X.Scale,
+                startPosition.X.Offset + delta.X,
+                startPosition.Y.Scale,
+                startPosition.Y.Offset + delta.Y
+            )
+        end
+    end)
+
+    connect(UserInputService.InputEnded, function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
+        end
+    end)
+end
+
+--==================================================
+-- CONTROLES
+--==================================================
+
+local function addToggle(name, key, y)
+    local b = makeButton(
+        Content,
+        "",
+        UDim2.fromOffset(5, y),
+        UDim2.new(1, -15, 0, 37)
+    )
+
+    local function refresh()
+        b.Text = name .. " : " ..
+            (Config[key] and "ON" or "OFF")
+
+        b.BackgroundColor3 = Config[key]
+            and Color3.fromRGB(0, 105, 105)
+            or Color3.fromRGB(35, 43, 58)
+    end
+
+    refresh()
+
+    connect(b.MouseButton1Click, function()
+        Config[key] = not Config[key]
+        refresh()
+    end)
+end
+
+local function addSlider(name, key, min, max, y)
+    local label = Instance.new("TextLabel")
+    label.Position = UDim2.fromOffset(5, y)
+    label.Size = UDim2.new(1, -15, 0, 24)
+    label.BackgroundTransparency = 1
+    label.TextColor3 = Color3.new(1, 1, 1)
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Font = Enum.Font.Gotham
+    label.TextSize = 13
+    label.Parent = Content
+
+    local bar = Instance.new("TextButton")
+    bar.Position = UDim2.fromOffset(5, y + 30)
+    bar.Size = UDim2.new(1, -15, 0, 8)
+    bar.Text = ""
+    bar.BackgroundColor3 = Color3.fromRGB(45, 52, 68)
+    bar.Parent = Content
+
+    Instance.new("UICorner", bar).CornerRadius = UDim.new(1, 0)
+
+    local fill = Instance.new("Frame")
+    fill.BackgroundColor3 = Config.ESPColor
+    fill.BorderSizePixel = 0
+    fill.Parent = bar
+
+    Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
+
+    local dragging = false
+
+    local function update(x)
+        local alpha = math.clamp(
+            (x - bar.AbsolutePosition.X) /
+            bar.AbsoluteSize.X, 0, 1
+        )
+
+        Config[key] = math.floor(min + alpha * (max - min))
+
+        fill.Size = UDim2.new(alpha, 0, 1, 0)
+        label.Text = name .. " : " .. Config[key]
+    end
+
+    update(
+        bar.AbsolutePosition.X +
+        ((Config[key] - min) / (max - min)) *
+        bar.AbsoluteSize.X
+    )
+
+    connect(bar.InputBegan, function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            update(input.Position.X)
+        end
+    end)
+
+    connect(UserInputService.InputChanged, function(input)
+        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            update(input.Position.X)
+        end
+    end)
+
+    connect(UserInputService.InputEnded, function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
+        end
+    end)
+end
+
+--==================================================
+-- ABAS
+--==================================================
+
+local function createTab(name, y, callback)
+    local b = makeButton(
+        Sidebar,
+        name,
+        UDim2.fromOffset(8, y),
+        UDim2.new(1, -16, 0, 38)
+    )
+
+    connect(b.MouseButton1Click, callback)
+end
+
+--==================================================
+-- AIM ASSIST PARA TREINAMENTO
+--==================================================
+
+local FOVCircle = Instance.new("Frame")
+FOVCircle.Name = "AimFOV"
+FOVCircle.AnchorPoint = Vector2.new(0.5, 0.5)
+FOVCircle.Size = UDim2.fromOffset(Config.FOV * 2, Config.FOV * 2)
+FOVCircle.BackgroundTransparency = 1
+FOVCircle.Position = UDim2.fromScale(0.5, 0.5)
+FOVCircle.Visible = false
+FOVCircle.Parent = GUI
+
+Instance.new("UICorner", FOVCircle).CornerRadius = UDim.new(1, 0)
+
+local FOVStroke = Instance.new("UIStroke")
+FOVStroke.Color = Config.ESPColor
+FOVStroke.Thickness = 1.5
+FOVStroke.Parent = FOVCircle
+
+local function getNPCs()
+    local result = {}
+
+    for _, model in ipairs(Workspace:GetDescendants()) do
+        if model:IsA("Model") then
+            local humanoid = model:FindFirstChildOfClass("Humanoid")
+            local root = model:FindFirstChild("HumanoidRootPart")
+
+            if humanoid and root
+                and humanoid.Health > 0
+                and not Players:GetPlayerFromCharacter(model)
+                and model ~= Player.Character then
+
+                table.insert(result, model)
+            end
+        end
+    end
+
+    return result
+end
+
+local function getAimTarget()
+    local bestTarget = nil
+    local bestDistance = Config.FOV
+    local center = Vector2.new(
+        Camera.ViewportSize.X / 2,
+        Camera.ViewportSize.Y / 2
+    )
+
+    for _, npc in ipairs(getNPCs()) do
+        local part = npc:FindFirstChild(Config.AimPart)
+            or npc:FindFirstChild("Head")
+
+        if part then
+            local screen, visible = Camera:WorldToViewportPoint(part.Position)
+
+            if visible then
+                local distance = (
+                    Vector2.new(screen.X, screen.Y) - center
+                ).Magnitude
+
+                if distance < bestDistance then
+                    bestDistance = distance
+                    bestTarget = part
+                end
+            end
+        end
+    end
+
+    return bestTarget
+end
+
+connect(UserInputService.InputBegan, function(input, processed)
+    if processed then return end
+
+    if input.UserInputType == Config.AimKey then
+        aiming = true
+    end
+end)
+
+connect(UserInputService.InputEnded, function(input)
+    if input.UserInputType == Config.AimKey then
+        aiming = false
+    end
+end)
+
+--==================================================
+-- ESP
+--==================================================
+
+local ESPLayer = Instance.new("ScreenGui")
+ESPLayer.Name = "AirFireGunsESP"
+ESPLayer.IgnoreGuiInset = true
+ESPLayer.DisplayOrder = 90
+ESPLayer.Parent = PlayerGui
+
+local function makeLine(parent)
+    local line = Instance.new("Frame")
+    line.AnchorPoint = Vector2.new(0, 0.5)
+    line.BorderSizePixel = 0
+    line.BackgroundColor3 = Config.ESPColor
+    line.Parent = parent
+    return line
+end
+
+local function setLine(line, a, b)
+    local delta = b - a
+    line.Position = UDim2.fromOffset(a.X, a.Y)
+    line.Size = UDim2.fromOffset(delta.Magnitude, Config.LineThickness)
+    line.Rotation = math.deg(math.atan2(delta.Y, delta.X))
+    line.Visible = true
+end
+
+local function createESP(model)
+    if ESPObjects[model] then return end
+
+    local folder = Instance.new("Folder")
+    folder.Name = "NPC_ESP"
+    folder.Parent = ESPLayer
+
+    local box = Instance.new("Frame")
+    box.BackgroundTransparency = 1
+    box.BorderSizePixel = 0
+    box.Parent = folder
+
+    local boxStroke = Instance.new("UIStroke")
+    boxStroke.Color = Config.ESPColor
+    boxStroke.Thickness = Config.LineThickness
+    boxStroke.Parent = box
+
+    local label = Instance.new("TextLabel")
+    label.BackgroundTransparency = 1
+    label.TextColor3 = Color3.new(1, 1, 1)
+    label.TextStrokeTransparency = 0
+    label.Font = Enum.Font.GothamBold
+    label.TextSize = 12
+    label.Parent = folder
+
+    local healthBack = Instance.new("Frame")
+    healthBack.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    healthBack.BorderSizePixel = 0
+    healthBack.Parent = folder
+
+    local healthFill = Instance.new("Frame")
+    healthFill.BackgroundColor3 = Color3.fromRGB(40, 220, 100)
+    healthFill.BorderSizePixel = 0
+    healthFill.Parent = healthBack
+
+    local skeleton = {}
+    for i = 1, 14 do
+        skeleton[i] = makeLine(folder)
+    end
+
+    ESPObjects[model] = {
+        Folder = folder,
+        Box = box,
+        BoxStroke = boxStroke,
+        Label = label,
+        HealthBack = healthBack,
+        HealthFill = healthFill,
+        Skeleton = skeleton
+    }
+end
+
+local skeletonConnections = {
+    {"Head", "UpperTorso"},
+    {"UpperTorso", "LowerTorso"},
+    {"UpperTorso", "LeftUpperArm"},
+    {"LeftUpperArm", "LeftLowerArm"},
+    {"LeftLowerArm", "LeftHand"},
+    {"UpperTorso", "RightUpperArm"},
+    {"RightUpperArm", "RightLowerArm"},
+    {"RightLowerArm", "RightHand"},
+    {"LowerTorso", "LeftUpperLeg"},
+    {"LeftUpperLeg", "LeftLowerLeg"},
+    {"LeftLowerLeg", "LeftFoot"},
+    {"LowerTorso", "RightUpperLeg"},
+    {"RightUpperLeg", "RightLowerLeg"},
+    {"RightLowerLeg", "RightFoot"}
+}
+
+local function updateESP()
+    for _, npc in ipairs(getNPCs()) do
+        if not ESPObjects[npc] then
+            createESP(npc)
+        end
+    end
+
+    for model, data in pairs(ESPObjects) do
+        if not model.Parent then
+            data.Folder:Destroy()
+            ESPObjects[model] = nil
+            continue
+        end
+
+        local humanoid = model:FindFirstChildOfClass("Humanoid")
+        local root = model:FindFirstChild("HumanoidRootPart")
+
+        if not humanoid or not root then
+            data.Folder.Parent = nil
+            continue
+        end
+
+        local myRoot = Player.Character
+            and Player.Character:FindFirstChild("HumanoidRootPart")
+
+        local distance = myRoot
+            and (myRoot.Position - root.Position).Magnitude
+            or math.huge
+
+        local active = distance <= Config.MaxDistance
+
+        local cf, size = model:GetBoundingBox()
+        local corners = {}
+
+        for x = -1, 1, 2 do
+            for y = -1, 1, 2 do
+                for z = -1, 1, 2 do
+                    local world = cf:PointToWorldSpace(
+                        Vector3.new(
+                            size.X * x / 2,
+                            size.Y * y / 2,
+                            size.Z * z / 2
+                        )
+                    )
+
+                    local point, visible = Camera:WorldToViewportPoint(world)
+                    if visible then
+                        table.insert(corners, Vector2.new(point.X, point.Y))
+                    end
+                end
+            end
+        end
+
+        if active and #corners == 8 then
+            local minX, minY = math.huge, math.huge
+            local maxX, maxY = -math.huge, -math.huge
+
+            for _, p in ipairs(corners) do
+                minX = math.min(minX, p.X)
+                minY = math.min(minY, p.Y)
+                maxX = math.max(maxX, p.X)
+                maxY = math.max(maxY, p.Y)
+            end
+
+            data.Box.Visible = Config.BoxESP
+            data.Box.Position = UDim2.fromOffset(minX, minY)
+            data.Box.Size = UDim2.fromOffset(maxX - minX, maxY - minY)
+            data.BoxStroke.Color = Config.ESPColor
+            data.BoxStroke.Thickness = Config.LineThickness
+
+            data.Label.Visible = Config.NameESP or Config.DistanceESP
+                or Config.HealthESP
+
+            local info = {}
+
+            if Config.NameESP then
+                table.insert(info, model.Name)
+            end
+
+            if Config.DistanceESP then
+                table.insert(info, math.floor(distance) .. "m")
+            end
+
+            if Config.HealthESP then
+                table.insert(info,
+                    math.floor(humanoid.Health) .. "/" ..
+                    math.floor(humanoid.MaxHealth) .. " HP"
+                )
+            end
+
+            data.Label.Text = table.concat(info, " | ")
+            data.Label.Position = UDim2.fromOffset(minX, minY - 20)
+            data.Label.Size = UDim2.fromOffset(maxX - minX, 18)
+
+            data.HealthBack.Visible = Config.HealthESP
+            data.HealthBack.Position = UDim2.fromOffset(minX - 6, minY)
+            data.HealthBack.Size = UDim2.fromOffset(4, maxY - minY)
+
+            local ratio = humanoid.MaxHealth > 0
+                and math.clamp(humanoid.Health / humanoid.MaxHealth, 0, 1)
+                or 0
+
+            data.HealthFill.Size = UDim2.new(1, 0, ratio, 0)
+            data.HealthFill.Position = UDim2.new(0, 0, 1 - ratio, 0)
+
+            local parts = {}
+            for _, pair in ipairs(skeletonConnections) do
+                local a = model:FindFirstChild(pair[1])
+                local b = model:FindFirstChild(pair[2])
+
+                if a and b then
+                    local p1, v1 = Camera:WorldToViewportPoint(a.Position)
+                    local p2, v2 = Camera:WorldToViewportPoint(b.Position)
+
+                    if v1 and v2 then
+                        table.insert(parts, {
+                            Vector2.new(p1.X, p1.Y),
+                            Vector2.new(p2.X, p2.Y)
+                        })
+                    end
+                end
+            end
+
+            for i, line in ipairs(data.Skeleton) do
+                local pair = parts[i]
+
+                line.Visible = Config.SkeletonESP and pair ~= nil
+                line.BackgroundColor3 = Config.ESPColor
+
+                if pair then
+                    setLine(line, pair[1], pair[2])
+                end
+            end
+        else
+            data.Box.Visible = false
+            data.Label.Visible = false
+            data.HealthBack.Visible = false
+
+            for _, line in ipairs(data.Skeleton) do
+                line.Visible = false
+            end
+        end
+    end
+end
+
+--==================================================
+-- PÁGINAS
+--==================================================
+
+local function showVisuals()
+    clearContent()
+
+    addToggle("Box ESP", "BoxESP", 5)
+    addToggle("Skeleton ESP", "SkeletonESP", 48)
+    addToggle("Name ESP", "NameESP", 91)
+    addToggle("Distance ESP", "DistanceESP", 134)
+    addToggle("Health ESP", "HealthESP", 177)
+
+    addSlider("Distância máxima", "MaxDistance", 50, 2000, 230)
+    addSlider("Espessura", "LineThickness", 1, 6, 290)
+end
+
+local function showAim()
+    clearContent()
+
+    addToggle("Aim Assist", "AimAssist", 5)
+    addSlider("FOV", "FOV", 20, 360, 55)
+    addSlider("Smoothness", "Smoothness", 0, 100, 115)
+
+    local partButton = makeButton(
+        Content,
+        "Aim Part: " .. Config.AimPart,
+        UDim2.fromOffset(5, 175),
+        UDim2.new(1, -15, 0, 38)
+    )
+
+    connect(partButton.MouseButton1Click, function()
+        Config.AimPart =
+            Config.AimPart == "Head" and "HumanoidRootPart" or "Head"
+
+        partButton.Text = "Aim Part: " .. Config.AimPart
+    end)
+
+    local keyButton = makeButton(
+        Content,
+        "Aim Key: Right Mouse",
+        UDim2.fromOffset(5, 220),
+        UDim2.new(1, -15, 0, 38)
+    )
+
+    connect(keyButton.MouseButton1Click, function()
+        Config.AimKey =
+            Config.AimKey == Enum.UserInputType.MouseButton2
+            and Enum.UserInputType.MouseButton1
+            or Enum.UserInputType.MouseButton2
+
+        keyButton.Text = Config.AimKey ==
+            Enum.UserInputType.MouseButton2
+            and "Aim Key: Right Mouse"
+            or "Aim Key: Left Mouse"
+    end)
+end
+
+local function showSettings()
+    clearContent()
+
+    local colorButton = makeButton(
+        Content,
+        "Cor: Ciano / Verde / Vermelho",
+        UDim2.fromOffset(5, 5),
+        UDim2.new(1, -15, 0, 38)
+    )
+
+    local colors = {
+        Color3.fromRGB(0, 220, 255),
+        Color3.fromRGB(0, 255, 120),
+        Color3.fromRGB(255, 70, 70)
+    }
+
+    local colorIndex = 1
+
+    connect(colorButton.MouseButton1Click, function()
+        colorIndex = colorIndex % #colors + 1
+        Config.ESPColor = colors[colorIndex]
+        colorButton.BackgroundColor3 = Config.ESPColor
+        FOVStroke.Color = Config.ESPColor
+    end)
+end
+
+createTab("VISUAIS", 15, showVisuals)
+createTab("AIM ASSIST", 60, showAim)
+createTab("CONFIGURAÇÕES", 105, showSettings)
+
+--==================================================
+-- ATUALIZAÇÃO
+--==================================================
+
+connect(RunService.RenderStepped, function(dt)
+    if not alive then return end
+
+    Camera = Workspace.CurrentCamera
+
+    FOVCircle.Visible = Config.AimAssist
+    FOVCircle.Size = UDim2.fromOffset(Config.FOV * 2, Config.FOV * 2)
+    FOVStroke.Color = Config.ESPColor
+
+    updateESP()
+
+    if Config.AimAssist and aiming then
+        local target = getAimTarget()
+
+        if target then
+            local screen = Camera:WorldToViewportPoint(target.Position)
+
+            local center = Vector2.new(
+                Camera.ViewportSize.X / 2,
+                Camera.ViewportSize.Y / 2
+            )
+
+            local targetPoint = Vector2.new(screen.X, screen.Y)
+            local delta = targetPoint - center
+
+            local smooth = math.max(1, Config.Smoothness)
+            local factor = math.clamp((100 - smooth) / 100, 0.02, 1)
+
+            local newPoint = center + delta * factor
+
+            local ray = Camera:ViewportPointToRay(
+                newPoint.X,
+                newPoint.Y
+            )
+
+            -- Assistência de câmera apenas no ambiente de treino.
+            local targetCFrame = CFrame.lookAt(
+                Camera.CFrame.Position,
+                target.Position
+            )
+
+            Camera.CFrame = Camera.CFrame:Lerp(
+                targetCFrame,
+                math.clamp(dt * (11 - smooth / 12), 0.02, 0.8)
+            )
+        end
+    end
+end)
+
+--==================================================
+-- MINIMIZAR / FECHAR
+--==================================================
+
+connect(Minimize.MouseButton1Click, function()
+    minimized = not minimized
+
+    Sidebar.Visible = not minimized
+    Content.Visible = not minimized
+
+    Main.Size = minimized
+        and UDim2.fromOffset(620, 55)
+        or UDim2.fromOffset(620, 430)
+
+    Minimize.Text = minimized and "+" or "-"
+end)
+
+connect(Close.MouseButton1Click, function()
+    alive = false
+    aiming = false
+
+    for _, c in ipairs(Connections) do
+        if c.Connected then
+            c:Disconnect()
+        end
+    end
+
+    for _, data in pairs(ESPObjects) do
+        data.Folder:Destroy()
+    end
+
+    table.clear(ESPObjects)
+
+    GUI:Destroy()
+    ESPayer = nil
+    ESPLayer:Destroy()
+end)
+
+--==================================================
+-- ANIMAÇÃO
+--==================================================
+
+showVisuals()
+
+Main.Size = UDim2.fromOffset(0, 0)
+
+TweenService:Create(
+    Main,
+    TweenInfo.new(0.5, Enum.EasingStyle.Back),
+    {Size = UDim2.fromOffset(620, 430)}
+):Play()
+
+print("AIRFIREGUNS V3 carregado!")
